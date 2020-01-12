@@ -42,7 +42,7 @@ class RSPProviderAPIImpl implements RSPModel {
         };
         const serversExplorer = ServerExplorer.getInstance();
         serversExplorer.RSPServersStatus.set(rsp.type.id, rspProperties);
-        serversExplorer.refresh();
+        serversExplorer.queueRefresh();
         const startRSP = await this.updateRSPActivationSetting(rsp, serversExplorer);
         if (startRSP) {
             const commandHandler = new CommandHandler(serversExplorer);
@@ -100,6 +100,6 @@ class RSPProviderAPIImpl implements RSPModel {
 
         serversExplorer.disposeRSPProperties(id);
         serversExplorer.RSPServersStatus.delete(id);
-        serversExplorer.refresh();
+        serversExplorer.queueRefresh();
     }
 }

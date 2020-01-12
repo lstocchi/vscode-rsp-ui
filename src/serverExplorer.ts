@@ -79,6 +79,8 @@ export class ServerExplorer implements TreeDataProvider<RSPState | ServerStateNo
     private readonly viewerAB: TreeView< RSPState | ServerStateNode | DeployableStateNode>;
     public RSPServersStatus: Map<string, RSPProperties> = new Map<string, RSPProperties>();
     public serverSelected: ServerStateNode;
+    private refreshTimer: NodeJS.Timer;
+    private readonly refreshQueue = Array<RSPState | ServerStateNode | undefined>();
 
     private constructor() {
         this.viewer = window.createTreeView('servers', { treeDataProvider: this }) ;
@@ -119,7 +121,7 @@ export class ServerExplorer implements TreeDataProvider<RSPState | ServerStateNo
             });
         }
 
-        this.refresh(this.RSPServersStatus.get(rspId).state);
+        this.queueRefresh(this.RSPServersStatus.get(rspId).state);
     }
 
     public async insertServer(rspId: string, event: Protocol.ServerHandle) {
@@ -129,14 +131,14 @@ export class ServerExplorer implements TreeDataProvider<RSPState | ServerStateNo
             const serverNode: ServerStateNode = this.convertToServerStateNode(rspId, state);
             if (serverNode) {
                 this.RSPServersStatus.get(rspId).state.serverStates.push(serverNode);
-                this.refresh({rsp: rspId, ...state } as ServerStateNode);
+                this.queueRefresh(this.RSPServersStatus.get(rspId).state);
             }
         }
     }
 
     public updateRSPServer(rspId: string, state: number) {
         this.RSPServersStatus.get(rspId).state.state = state;
-        this.refresh();
+        this.queueRefresh(this.RSPServersStatus.get(rspId).state);
     }
 
     public updateServer(rspId: string, event: Protocol.ServerState): void {
@@ -144,7 +146,7 @@ export class ServerExplorer implements TreeDataProvider<RSPState | ServerStateNo
                                             findIndex(state => state.server.id === event.server.id);
         const serverNode: ServerStateNode = this.convertToServerStateNode(rspId, event);
         this.RSPServersStatus.get(rspId).state.serverStates[indexServer] = serverNode;
-        this.refresh();
+        this.queueRefresh(serverNode);
         const channel: OutputChannel = this.serverOutputChannels.get(event.server.id);
         if (event.state === ServerState.STARTING && channel) {
             channel.clear();
@@ -179,7 +181,7 @@ export class ServerExplorer implements TreeDataProvider<RSPState | ServerStateNo
     public removeServer(rspId: string, handle: Protocol.ServerHandle): void {
         this.RSPServersStatus.get(rspId).state.serverStates = this.RSPServersStatus.get(rspId).state.serverStates.
                                                                         filter(state => state.server.id !== handle.id);
-        this.refresh();
+        this.queueRefresh(this.RSPServersStatus.get(rspId).state);
         const channel: OutputChannel = this.serverOutputChannels.get(handle.id);
         this.serverOutputChannels.delete(handle.id);
         if (channel) {
@@ -208,10 +210,39 @@ export class ServerExplorer implements TreeDataProvider<RSPState | ServerStateNo
     }
 
     public refresh(data?: RSPState | ServerStateNode): void {
-        this._onDidChangeTreeData.fire();
+        console.log('refresh');
+        this._onDidChangeTreeData.fire(data);
         if (data !== undefined && this.isServerElement(data)) {
             this.selectNode(data);
         }
+    }
+
+    public queueRefresh(data?: RSPState | ServerStateNode) {
+        clearTimeout(this.refreshTimer);
+        // if data is undefined we need to perform a total refresh
+        // -> empty the queue and add an undefined elem
+        if (!data) {
+            this.refreshQueue.splice(0, this.refreshQueue.length, undefined);
+        } else {
+            // if queue has an undefined value we don't need to add anything, a total refresh will happen soon
+            if (!(this.refreshQueue.length === 1 && this.refreshQueue[0] === undefined)) {
+                // check if element already is in refreshqueue before pushing it
+                const hasData = this.refreshQueue.find(nodeQueue => {
+                    if (this.isRSPElement(data)) {
+                        return (data as RSPState).type.id === (nodeQueue as RSPState).type.id;
+                    } else {
+                        return (data as ServerStateNode).server.id === (nodeQueue as ServerStateNode).server.id
+                        && (data as ServerStateNode).rsp === (nodeQueue as ServerStateNode).rsp;
+                    }
+                });
+                if (!hasData) {
+                    this.refreshQueue.push(data);
+                }
+            }
+        }
+        this.refreshTimer = setTimeout(() => {
+            this.refreshQueue.splice(0).forEach(node => this.refresh(node));
+        }, 500);
     }
 
     public selectNode(data: RSPState | ServerStateNode): void {
